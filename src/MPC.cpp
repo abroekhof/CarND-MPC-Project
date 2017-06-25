@@ -6,19 +6,11 @@
 using CppAD::AD;
 
 // N defined in MPC.h
-double dt = 0.05;
 
-// This value assumes the model presented in the classroom is used.
-//
-// It was obtained by measuring the radius formed by running the vehicle in the
-// simulator around in a circle with a constant steering angle and velocity on a
-// flat terrain.
-//
-// Lf was tuned until the the radius formed by the simulating the model
-// presented in the classroom matched the previous radius.
-//
-// This is the length from front to CoG that has a similar radius.
-const double Lf = 2.67;
+// Time step: 
+// This was chosen to model the actuator latency. Since the car can't update its actuators faster 
+// than the latency, it makes sense to factor this into the model as well.
+double dt = 0.1;
 
 // Both the reference cross track and orientation errors are 0.
 // The reference velocity is set to 40 mph.
@@ -33,7 +25,7 @@ size_t psi_start = y_start + N;
 size_t v_start = psi_start + N;
 size_t cte_start = v_start + N;
 size_t epsi_start = cte_start + N;
-size_t delta_start = epsi_start + N;
+size_t delta_start = epsi_start + N - 1;
 size_t a_start = delta_start + N - 1;
 
 class FG_eval {
@@ -44,29 +36,29 @@ class FG_eval {
 
   typedef CPPAD_TESTVECTOR(AD<double>) ADvector;
   void operator()(ADvector& fg, const ADvector& vars) {
-    // TODO: implement MPC
     // `fg` a vector of the cost constraints, `vars` is a vector of variable values (state & actuators)
     // NOTE: You'll probably go back and forth between this function and
     // the Solver function below.
     fg[0] = 0;
 
     // Reference error cost
+    // Weights were chosen to emphasize CTE first, then car angle, with good results.
     for (int t = 0; t < N; t++) {
-      fg[0] += 1*CppAD::pow(vars[cte_start+t], 2);
-      fg[0] += 1*CppAD::pow(vars[epsi_start+t], 2);
+      fg[0] += 100*CppAD::pow(vars[cte_start+t], 2);
+      fg[0] += 50*CppAD::pow(vars[epsi_start+t], 2);
       fg[0] += 1*CppAD::pow(vars[v_start+t] - ref_v, 2);
     }
 
     // Minimize actuators
     for (int t = 0; t < N - 1; t++) {
-      fg[0] += 10*CppAD::pow(vars[delta_start + t], 2);
-      fg[0] += 10*CppAD::pow(vars[a_start + t], 2);
+      fg[0] += 1*CppAD::pow(vars[delta_start + t], 2);
+      fg[0] += 1*CppAD::pow(vars[a_start + t], 2);
     }
 
     // Minimize chatter
     for (int t = 0; t < N - 2; t++) {
-      fg[0] += CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
-      fg[0] += CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
+      fg[0] += 1*CppAD::pow(vars[delta_start + t + 1] - vars[delta_start + t], 2);
+      fg[0] += 1*CppAD::pow(vars[a_start + t + 1] - vars[a_start + t], 2);
     }
 
     // Set up constraints
@@ -102,16 +94,7 @@ class FG_eval {
       AD<double> f0 = coeffs[0] + coeffs[1]  * x0 + coeffs[2] * pow(x0,2) + coeffs[3] * pow(x0,3);
       AD<double> psides0 = CppAD::atan(coeffs[1] + 2 * coeffs[2] * x0 + 3 *coeffs[3]* pow(x0, 2));
 
-      // Here's `x` to get you started.
-      // The idea here is to constrain this value to be 0.
-      //
-      // Recall the equations for the model:
-      // x_[t+1] = x[t] + v[t] * cos(psi[t]) * dt
-      // y_[t+1] = y[t] + v[t] * sin(psi[t]) * dt
-      // psi_[t+1] = psi[t] + v[t] / Lf * delta[t] * dt
-      // v_[t+1] = v[t] + a[t] * dt
-      // cte[t+1] = f(x[t]) - y[t] + v[t] * sin(epsi[t]) * dt
-      // epsi[t+1] = psi[t] - psides[t] + v[t] * delta[t] / Lf * dt
+      // Car model equations.
       fg[1 + x_start + t] = x1 - (x0 + v0 * CppAD::cos(psi0) * dt);
       fg[1 + y_start + t] = y1 - (y0 + v0 * CppAD::sin(psi0) * dt);
       fg[1 + psi_start + t] = psi1 - (psi0 + v0 * delta0 / Lf * dt);
@@ -125,12 +108,12 @@ class FG_eval {
 //
 // MPC class definition implementation.
 //
-MPC::MPC() : prev_delta(0), prev_a(0) {}
+MPC::MPC() {}
 MPC::~MPC() {}
 
 vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   bool ok = true;
-  // size_t i;
+  size_t i;
   typedef CPPAD_TESTVECTOR(double) Dvector;
 
   double x = state[0];
@@ -149,7 +132,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // Initial value of the independent variables.
   // SHOULD BE 0 besides initial state.
   Dvector vars(n_vars);
-  for (int i = 0; i < n_vars; i++) {
+  for (i = 0; i < n_vars; i++) {
     vars[i] = 0;
   }
 
@@ -166,22 +149,20 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
 
   // Set all non-actuators upper and lowerlimits
   // to the max negative and positive values.
-  for (int i = 0; i < delta_start; i++) {
+  for (i = 0; i < delta_start; i++) {
     vars_lowerbound[i] = -1.0e19;
     vars_upperbound[i] = 1.0e19;
   }
 
   // The upper and lower limits of delta are set to -25 and 25
   // degrees (values in radians).
-  // NOTE: Feel free to change this to something else.
-  for (int i = delta_start; i < a_start; i++) {
+  for (i = delta_start; i < a_start; i++) {
     vars_lowerbound[i] = -0.436332;
     vars_upperbound[i] = 0.436332;
   }
 
   // Acceleration/decceleration upper and lower limits.
-  // NOTE: Feel free to change this to something else.
-  for (int i = a_start; i < n_vars; i++) {
+  for (i = a_start; i < n_vars; i++) {
     vars_lowerbound[i] = -1.0;
     vars_upperbound[i] = 1.0;
   }
@@ -190,7 +171,7 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // Should be 0 besides initial state.
   Dvector constraints_lowerbound(n_constraints);
   Dvector constraints_upperbound(n_constraints);
-  for (int i = 0; i < n_constraints; i++) {
+  for (i = 0; i < n_constraints; i++) {
     constraints_lowerbound[i] = 0;
     constraints_upperbound[i] = 0;
   }
@@ -211,9 +192,6 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   // object that computes objective and constraints
   FG_eval fg_eval(coeffs);
 
-  //
-  // NOTE: You don't have to worry about these options
-  //
   // options for IPOPT solver
   std::string options;
   // Uncomment this if you'd like more print information
@@ -244,11 +222,11 @@ vector<double> MPC::Solve(Eigen::VectorXd state, Eigen::VectorXd coeffs) {
   auto cost = solution.obj_value;
   std::cout << "Cost " << cost << std::endl;
 
-  for (int i = 0; i < N; ++i) {
+  // Store the predicted x/y coordinates.
+  for (i = 0; i < N; ++i) {
     mpc_x[i] = solution.x[x_start + i];
     mpc_y[i] = solution.x[y_start + i];
   }
-  prev_a = solution.x[a_start];
-  prev_delta = solution.x[delta_start];
+
   return {solution.x[delta_start],   solution.x[a_start]};
 }

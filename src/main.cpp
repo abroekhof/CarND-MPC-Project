@@ -12,6 +12,9 @@
 // for convenience
 using json = nlohmann::json;
 
+// The time delay, in ms
+const int time_delay = 100; 
+
 // For converting back and forth between radians and degrees.
 constexpr double pi() { return M_PI; }
 double deg2rad(double x) { return x * pi() / 180; }
@@ -92,38 +95,35 @@ int main() {
           double psi = j[1]["psi"];
           double v = j[1]["speed"];
 
-          // Define containers for vehicle base coordinates
-          Eigen::VectorXd ptsx_vehicle(ptsx.size());
-          Eigen::VectorXd ptsy_vehicle(ptsy.size());
-
-          // Transform the coordinates to vehicle base coordinates
-          double dx, dy;
+          // Transform from Global to Car reference frame.
+          Eigen::VectorXd ptsx_car(ptsx.size());
+          Eigen::VectorXd ptsy_car(ptsy.size());
+          double x_diff, y_diff;
           for (int i = 0; i < ptsx.size(); i++) {
-            dx = ptsx[i] - px;
-            dy = ptsy[i] - py;
-            ptsx_vehicle[i] = dx * cos(psi) + dy * sin(psi);
-            ptsy_vehicle[i] = dy * cos(psi) - dx * sin(psi);
+            x_diff = ptsx[i] - px;
+            y_diff = ptsy[i] - py;
+            ptsx_car[i] = x_diff * cos(psi) + y_diff * sin(psi);
+            ptsy_car[i] = y_diff * cos(psi) - x_diff * sin(psi);
           }
 
-          // The polynomial is fitted to a straight line so a polynomial with
-          // order 1 is sufficient.
-          auto coeffs = polyfit(ptsx_vehicle, ptsy_vehicle, 3);  
-          // The cross track error is calculated by evaluating at polynomial at x, f(x)
-          // and subtracting y.
+          // Use a 3rd order polynomial to fit the track
+          auto coeffs = polyfit(ptsx_car, ptsy_car, 3);  
+          // The cross track error is calculated by solving the route equation at zero.
           double cte = polyeval(coeffs, 0);
           // Due to the sign starting at 0, the orientation error is -f'(x).
           // derivative of coeffs[0] + coeffs[1] * x -> coeffs[1]
           double epsi = -atan(coeffs[1]);
 
           Eigen::VectorXd state(6);
-          state << 0, 0, 0, v, cte, epsi;
+          // Take the time delay into account when calculating car position.
+          state << v*time_delay/1000.0, 0, 0, v, cte, epsi;
           auto result = mpc.Solve(state, coeffs);
 
-          double steer_value = -result[0];
+          double steer_value = -result[0]/(deg2rad(25)*Lf);
           double throttle_value = result[1];
 
           json msgJson;
-          msgJson["steering_angle"] = steer_value/deg2rad(25);
+          msgJson["steering_angle"] = steer_value;
           msgJson["throttle"] = throttle_value;
 
           //Display the MPC predicted trajectory 
@@ -136,14 +136,13 @@ int main() {
           vector<double> next_x_vals;
           vector<double> next_y_vals;
 
-          for (int i = 0; i < N; ++i) {
+          for (int i = 0; i < N*5; i = i + 5) {
             double y = polyeval(coeffs, i);
             next_x_vals.push_back(i);
             next_y_vals.push_back(y);
           }
           msgJson["next_x"] = next_x_vals;
           msgJson["next_y"] = next_y_vals;
-
 
           auto msg = "42[\"steer\"," + msgJson.dump() + "]";
           std::cout << msg << std::endl;
@@ -156,7 +155,7 @@ int main() {
           //
           // NOTE: REMEMBER TO SET THIS TO 100 MILLISECONDS BEFORE
           // SUBMITTING.
-          this_thread::sleep_for(chrono::milliseconds(100));
+          this_thread::sleep_for(chrono::milliseconds(time_delay));
           ws.send(msg.data(), msg.length(), uWS::OpCode::TEXT);
         }
       } else {
