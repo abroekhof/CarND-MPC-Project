@@ -1,7 +1,7 @@
 # MPC Project Submission
 
 ## Cost function
-It uses a cost function based on Cross Track Error, path angle deviation, and velocity error. The cost function also incorporates the actuator inputs, to minimize their usage. Furthermore, the difference between successive actuations is included to prevent chattering between different actuator inputs.
+This implementation uses a cost function based on cross track error, path angle deviation, and velocity error. The cost function also incorporates the actuator inputs, to minimize their usage. Furthermore, the difference between successive actuations is included to prevent chattering between different actuator inputs.
 
 These costs were weighted, with CTE having the highest priority, followed by the path angle deviation. This provided good results, and is an intuitive decision, given that the main priority is to center the car, and have it point in the correct direction.
 
